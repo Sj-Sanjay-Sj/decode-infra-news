@@ -42,6 +42,22 @@ class IngestionTests(unittest.TestCase):
         with httpx.Client(transport=httpx.MockTransport(lambda r: next(responses))) as client, patch('ingest.time.sleep'):
             self.assertEqual(ingest.fetch_feed(client, 'Test', 'https://example.com/rss'), [])
 
+    def test_long_url_lookup_uses_post_body(self):
+        urls = ["https://news.google.com/rss/articles/" + "a" * 900 + str(i) for i in range(55)]
+        db = ingest.create_client("https://example.supabase.co", "test-only")
+        requests = []
+        def send(client, request, **kwargs):
+            requests.append(request)
+            return httpx.Response(200, json=[{"url": urls[0]}], request=request)
+        with patch.object(httpx.Client, "send", send):
+            self.assertEqual(ingest.existing_urls(db, urls), {urls[0]})
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertEqual(request.method, "POST")
+            self.assertLess(len(str(request.url)), 200)
+        sent = [url for request in requests for url in json.loads(request.content)["p_urls"]]
+        self.assertEqual(sent, urls)
+
     def test_budget_exhaustion_does_not_call_ai(self):
         db, ai = Mock(), Mock()
         db.rpc.return_value.execute.return_value.data = False
