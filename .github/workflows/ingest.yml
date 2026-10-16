@@ -1,0 +1,35 @@
+name: Decode Infra news ingestion
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: decode-infra-news-ingestion
+  cancel-in-progress: false
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install dependencies
+        run: python -m pip install --quiet -r requirements-lock.txt
+      - name: Ingest news
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_DAILY_REQUEST_LIMIT: ${{ vars.GEMINI_DAILY_REQUEST_LIMIT || '15' }}
+          MAX_ARTICLES_PER_RUN: '3'
+          PYTHONUNBUFFERED: '1'
+        # Success is quiet. Warnings/errors and a failing exit status remain visible.
+        run: python ingest.py
