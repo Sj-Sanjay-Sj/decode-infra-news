@@ -55,6 +55,22 @@ class Enrichment(BaseModel):
     bullet_summary: list[str] = Field(min_length=2, max_length=2)
 
 
+# Gemini 2.5 accepts a subset of JSON Schema. Keep the wire schema minimal;
+# validate lengths, bullet count, and unexpected fields with Pydantic locally.
+GEMINI_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "city": {"type": "STRING"},
+        "category": {"type": "STRING", "enum": ["Residential", "Commercial", "Policy/RERA", "Infrastructure", "Market Insights"]},
+        "developer": {"type": "STRING", "nullable": True},
+        "micro_market": {"type": "STRING", "nullable": True},
+        "investment_figure": {"type": "STRING", "nullable": True},
+        "bullet_summary": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["city", "category", "developer", "micro_market", "investment_figure", "bullet_summary"],
+}
+
+
 @dataclass(frozen=True)
 class Article:
     title: str
@@ -160,7 +176,7 @@ def enrich(ai: genai.Client, db, article: Article, daily_limit: int) -> Enrichme
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
-                    response_schema=Enrichment,
+                    response_schema=GEMINI_RESPONSE_SCHEMA,
                     temperature=0.1,
                     max_output_tokens=1200,
                     thinking_config=types.ThinkingConfig(thinking_budget=0),
