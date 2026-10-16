@@ -19,7 +19,7 @@ create table if not exists public.real_estate_news (
         and length(trim(bullet_summary[1])) between 1 and 350
         and length(trim(bullet_summary[2])) between 1 and 350
     ),
-    ai_model text not null default 'gemini-2.5-flash',
+    ai_model text not null default 'gemini-3.8-flash',
     created_at timestamptz not null default now()
 );
 create index if not exists news_latest_idx on public.real_estate_news (published_at desc, id desc);

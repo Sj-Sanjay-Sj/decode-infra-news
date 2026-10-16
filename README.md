@@ -8,7 +8,7 @@ This code uses no paid API features, search grounding, paid extraction services,
 
 - **Vercel Hobby is for personal, non-commercial use.** A commercial real estate portal needs different hosting or a paid Vercel plan. The supplied frontend is a static export, so it can be served by an existing host that supports static files; no Next.js server is necessary. Do not deploy a commercial portal on Hobby assuming its terms allow it. [Vercel terms](https://vercel.com/legal/terms).
 - **Use a public GitHub repository and standard Linux runners for the supplied 20-minute schedule.** This is 72 runs/day, or 2,232 runs in a 31-day month. Private repositories can exceed their 2,000-minute allowance. Keep Actions paid usage disabled/set an enforced zero spending budget. Standard runners in public repositories are free. [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
-- **Gemini 2.5 Flash currently has free input/output, but Google restricts the 2.5 models to projects that actively used them previously.** Confirm access before deploying this exact model. This implementation intentionally keeps the requested `gemini-2.5-flash`; it does not silently switch models. New projects may need an explicitly chosen supported free-tier model and corresponding configuration changes. Use a free-tier project without paid billing; a script cannot determine your billing tier from an API key. [Pricing](https://ai.google.dev/gemini-api/docs/pricing), [model availability](https://ai.google.dev/gemini-api/docs/deprecations).
+- **This deployment uses Gemini 3.8 Flash, with free input/output on the Free tier.** Gemini 2.5 Flash is restricted to previously active projects and is unavailable to this deployment. The model is explicitly set in `ingest.py`; the pipeline does not silently fall back to another model. Use a free-tier project without paid billing; a script cannot determine your billing tier from an API key. [Pricing](https://ai.google.dev/gemini-api/docs/pricing), [model availability](https://ai.google.dev/gemini-api/docs/deprecations).
 - Daily request, token and minute limits vary by project. Check AI Studio and set `GEMINI_DAILY_REQUEST_LIMIT` below your actual available daily quota. The default 15/day is a conservative application budget, **not a promise about Google's allowance**. The database counter counts attempted calls and retries, resets at UTC midnight, and only covers this pipeline. Share neither its key nor quota with unrelated workloads if you need predictable capacity. A 429 stops processing with a visible failed job; the script never upgrades to paid access.
 - Supabase Free has finite database, egress, connections, and Realtime quotas. Stay on the Free plan; monitor usage rather than assuming unlimited traffic. Thirty-day record retention bounds normal database growth, but cannot bound anonymous public traffic. Free projects can be restricted or paused and have no production availability guarantee. [Billing](https://supabase.com/docs/guides/platform/billing-on-supabase), [Realtime limits](https://supabase.com/docs/guides/realtime/limits).
 - GitHub cron is best effort: jobs can be delayed or dropped, only run from the default branch, and public-repository schedules are disabled after 60 days without repository activity. Realtime means live delivery **after an insert**, not continuous publisher scraping. [Schedule behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
@@ -34,7 +34,7 @@ Place the contents of this directory at your repository root (including the hidd
 
 | Secret | Value |
 | --- | --- |
-| `GEMINI_API_KEY` | Free-tier Gemini project key with 2.5 Flash access |
+| `GEMINI_API_KEY` | Free-tier Gemini project key with 3.8 Flash access |
 | `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` |
 | `SUPABASE_KEY` | Server service-role/secret key, never the public anon key |
 
@@ -91,6 +91,14 @@ Only RSS titles/descriptions are supplied to Gemini, not full articles or paywal
 Links are normalized by removing fragments and common tracking parameters while retaining article identity query parameters. Existing links are checked through a server-only database function using a POST body to avoid URL length limits from Google News links. Deduplication is by URL before AI processing, with a database UNIQUE constraint and conflict-ignore insert as the final guard. **Different URLs for syndicated stories are not semantic duplicates.** Google News RSS links remain Google redirect URLs; the code does not attempt unsupported decoding or fetch arbitrary publisher URLs. The same story in ETRealty and Google News can therefore appear twice. No claim of cross-publisher deduplication is made.
 
 Candidates are processed oldest first within the 72-hour window to reduce starvation. There is no durable raw-feed backlog: failed items can be retried while they remain in RSS, but items that age out, disappear, or exceed the daily quota can be lost. This is a bounded free-tier feed, not a complete news archive. Thirty-day cleanup deletes stored articles; AI budget history older than fourteen days is also pruned.
+
+## Deployed instance
+
+Website: https://decode-infra-news.vercel.app/
+
+Repository: https://github.com/Sj-Sanjay-Sj/decode-infra-news
+
+The website was deployed as a Next.js static export on Vercel Hobby. News updates come directly from Supabase; they do not require a website redeployment. Source changes need a new website deployment because Git integration is not connected.
 
 ## Live behavior and validation
 

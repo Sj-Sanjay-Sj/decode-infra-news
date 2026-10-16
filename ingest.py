@@ -25,6 +25,7 @@ from supabase import ClientOptions, create_client
 LOG = logging.getLogger("decode_infra")
 UTC = timezone.utc
 TABLE = "real_estate_news"
+MODEL = "gemini-3.8-flash"
 TRACKING = {"gclid", "fbclid", "mc_cid", "mc_eid"}
 
 
@@ -55,7 +56,7 @@ class Enrichment(BaseModel):
     bullet_summary: list[str] = Field(min_length=2, max_length=2)
 
 
-# Gemini 2.5 accepts a subset of JSON Schema. Keep the wire schema minimal;
+# Keep the wire schema minimal for compatibility with the Generate Content API;
 # validate lengths, bullet count, and unexpected fields with Pydantic locally.
 GEMINI_RESPONSE_SCHEMA = {
     "type": "OBJECT",
@@ -171,15 +172,15 @@ def enrich(ai: genai.Client, db, article: Article, daily_limit: int) -> Enrichme
             return None
         try:
             response = ai.models.generate_content(
-                model="gemini-2.5-flash",
+                model=MODEL,
                 contents=json.dumps({"title": article.title, "description": article.description}, ensure_ascii=False),
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
                     response_schema=GEMINI_RESPONSE_SCHEMA,
-                    temperature=0.1,
-                    max_output_tokens=1200,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    temperature=1.0,
+                    max_output_tokens=4096,
+                    thinking_config=types.ThinkingConfig(thinking_level="low"),
                 ),
             )
             result = Enrichment.model_validate_json(response.text or "")
@@ -240,7 +241,7 @@ def main() -> int:
                      key=lambda a: (a.published_at, a.url))[:max_articles]
     failures = 0
     with genai.Client(api_key=required("GEMINI_API_KEY"),
-                      http_options=types.HttpOptions(timeout=30_000, retry_options=types.HttpRetryOptions(attempts=1))) as ai:
+                      http_options=types.HttpOptions(timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1))) as ai:
         for index, article in enumerate(pending):
             if index:
                 time.sleep(7)  # Conservative pacing; dashboard RPM/TPM limits still apply.
@@ -250,7 +251,7 @@ def main() -> int:
                     break
                 row = {"title": article.title, "source": article.source, "url": article.url,
                        "published_at": article.published_at.isoformat(), "description": article.description,
-                       "ai_model": "gemini-2.5-flash", **data.model_dump()}
+                       "ai_model": MODEL, **data.model_dump()}
                 # DO NOTHING on conflict: duplicate deliveries must not rewrite published data.
                 db.table(TABLE).upsert(row, on_conflict="url", ignore_duplicates=True).execute()
             except errors.APIError as exc:
