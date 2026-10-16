@@ -43,6 +43,14 @@ begin
     end if;
 end $$;
 
+-- POST bodies avoid URI limits from long Google News links in GET filters.
+create or replace function public.existing_news_urls(p_urls text[])
+returns table(url text) language sql stable security invoker set search_path = '' as $$
+    select n.url from public.real_estate_news n where n.url = any(p_urls);
+$$;
+revoke all on function public.existing_news_urls(text[]) from public, anon, authenticated;
+grant execute on function public.existing_news_urls(text[]) to service_role;
+
 -- Shared daily request budget, inaccessible to browser clients.
 create table if not exists public.news_ai_usage (
     day date primary key,

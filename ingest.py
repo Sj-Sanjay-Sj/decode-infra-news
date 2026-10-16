@@ -179,6 +179,16 @@ def enrich(ai: genai.Client, db, article: Article, daily_limit: int) -> Enrichme
     return None
 
 
+
+def existing_urls(db, urls: list[str]) -> set[str]:
+    """Use POST rather than GET filters: Google News URLs can be very long."""
+    existing: set[str] = set()
+    for start in range(0, len(urls), 50):
+        rows = db.rpc("existing_news_urls", {"p_urls": urls[start:start + 50]}).execute().data
+        existing.update(row["url"] for row in rows)
+    return existing
+
+
 def required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -209,11 +219,7 @@ def main() -> int:
         LOG.error("All RSS feeds failed")
         return 1
     # Deduplicate before spending AI requests; SQL uniqueness is the final race guard.
-    existing: set[str] = set()
-    urls = list(candidates)
-    for start in range(0, len(urls), 50):
-        rows = db.table(TABLE).select("url").in_("url", urls[start:start + 50]).execute().data
-        existing.update(row["url"] for row in rows)
+    existing = existing_urls(db, list(candidates))
     pending = sorted((a for a in candidates.values() if a.url not in existing),
                      key=lambda a: (a.published_at, a.url))[:max_articles]
     failures = 0
