@@ -1,2 +1,6 @@
 import LiveNewsTicker from "../components/LiveNewsTicker";
-export default function Home() { return <main><LiveNewsTicker /></main>; }
+import CoverageDetails from "../components/CoverageDetails";
+
+export default function Home() {
+  return <main><LiveNewsTicker /><CoverageDetails /></main>;
+}
