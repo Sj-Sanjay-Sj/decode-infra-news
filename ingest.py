@@ -238,7 +238,12 @@ def main() -> int:
                 # DO NOTHING on conflict: duplicate deliveries must not rewrite published data.
                 db.table(TABLE).upsert(row, on_conflict="url", ignore_duplicates=True).execute()
             except errors.APIError as exc:
-                LOG.error("Gemini request failed (status %s); remaining items deferred", exc.code)
+                message = str(getattr(exc, "message", ""))
+                for name in ("GEMINI_API_KEY", "SUPABASE_KEY"):
+                    value = os.environ.get(name)
+                    if value:
+                        message = message.replace(value, "[redacted]")
+                LOG.error("Gemini request failed (status %s): %s; remaining items deferred", exc.code, message[:400])
                 failures += 1
                 break
             except Exception as exc:
