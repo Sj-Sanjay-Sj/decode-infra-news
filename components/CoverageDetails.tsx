@@ -48,8 +48,8 @@ export default function CoverageDetails() {
       <div className={styles.digest}>
         <div>
           <p className={styles.eyebrow}>The daily briefing</p>
-          <h2 id="coverage-heading">A wider view of Indian real estate.</h2>
-          <p>News, property blogs, research and official notices, brought together in the owner’s daily email digest.</p>
+          <h2 id="coverage-heading">A closer view of Hyderabad.</h2>
+          <p>Hyderabad news, property blogs, research and official notices, brought together in the owner’s daily email digest.</p>
         </div>
         <div className={styles.schedule}>
           <span className={styles.label}>Scheduled daily</span>
@@ -60,7 +60,7 @@ export default function CoverageDetails() {
 
       <div className={styles.explainer}>
         <p><strong>Inside the digest.</strong> Key developments, city and category labels, concise summaries and original source links. Reports about the same event are grouped, and material updates are highlighted.</p>
-        <p><strong>Across India.</strong> Hyderabad, Bengaluru, Mumbai, Pune, Delhi-NCR, Chennai, Kolkata, Ahmedabad and emerging cities, alongside national policy and infrastructure.</p>
+        <p><strong>Hyderabad focus.</strong> Hyderabad and its surrounding property markets, including Kokapet, Neopolis, Raidurg, Gachibowli, Nanakramguda, Tellapur and Shamshabad. Telangana policy is included when it affects the city.</p>
       </div>
 
       <div className={styles.sourceHeader}>
@@ -79,7 +79,7 @@ export default function CoverageDetails() {
         ))}
       </div>
       <div className={styles.notes}>
-        <p><strong>How coverage works.</strong> The live feed above shows collected, AI-summarized articles. The separately scheduled email digest also searches the wider sources listed here; listing a source does not mean every article is imported into the live feed.</p>
+        <p><strong>How coverage works.</strong> The feed above shows Hyderabad discoveries published within the past 30 days, with source excerpts or labelled AI summaries. The separately scheduled email digest also searches the wider sources listed here; listing a source does not mean every article is imported into the live feed.</p>
         <p>Coverage is best effort. Blocked pages and delayed indexing can cause gaps. The digest runs through the owner’s Codex automation and connected Gmail; meaningful new stories trigger an email. This site does not offer public email sign-ups.</p>
       </div>
     </section>

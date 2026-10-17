@@ -1,7 +1,7 @@
 .ticker { max-width: 1100px; margin: 0 auto; padding: 52px 24px; color: #182c2c; font-family: Arial, sans-serif; }
 .header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .eyebrow { color: #45635d; text-transform: uppercase; font-size: 12px; font-weight: 700; letter-spacing: .14em; }
-.header h2 { font-family: Georgia, serif; font-size: clamp(30px, 5vw, 48px); font-weight: 400; letter-spacing: -.04em; margin: 12px 0; }
+.header h1 { font-family: Georgia, serif; font-size: clamp(30px, 5vw, 48px); font-weight: 400; letter-spacing: -.04em; margin: 12px 0; }
 .status { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
 .live, .offline { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #177346; }
 .offline { background: #946217; }
@@ -20,3 +20,8 @@
 .meta { margin-top: 24px; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 680px) { .list { grid-template-columns: 1fr; } .header { align-items: flex-start; flex-direction: column; gap: 8px; } .ticker { padding: 30px 16px; } }
+
+.excerpt { color: #3d504a; font-size: 14px; line-height: 1.7; }
+.summaryType { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #59655f; }
+.loadMore { display: block; margin: 28px auto; padding: 13px 24px; background: #183e34; color: #fff; border: 0; border-radius: 5px; font-size: 14px; cursor: pointer; }
+.loadMore:focus-visible { outline: 3px solid #956c20; outline-offset: 4px; }

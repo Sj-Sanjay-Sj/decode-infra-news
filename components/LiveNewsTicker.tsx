@@ -13,14 +13,15 @@ type News = {
   city: string;
   category: string;
   bullet_summary: string[];
+  ai_model: string;
 };
-const columns = "id,title,source,url,published_at,city,category,bullet_summary";
+const columns = "id,title,source,url,published_at,city,category,bullet_summary,ai_model";
 
 // Select only the public fields. Never put a service-role key in NEXT_PUBLIC_*.
 function validNews(value: unknown): value is News {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
-  return ["id", "title", "source", "url", "published_at", "city", "category"]
+  return ["id", "title", "source", "url", "published_at", "city", "category", "ai_model"]
     .every((key) => typeof row[key] === "string") &&
     /^https?:\/\//i.test(String(row.url)) &&
     Number.isFinite(Date.parse(String(row.published_at))) &&
@@ -28,13 +29,20 @@ function validNews(value: unknown): value is News {
     row.bullet_summary.every((bullet) => typeof bullet === "string");
 }
 
-function latest(rows: News[]): News[] {
-  return [...new Map(rows.map((row) => [row.id, row])).values()]
+function inWindow(row: News): boolean {
+  const age = Date.now() - Date.parse(row.published_at);
+  return row.city === "Hyderabad" && age >= -15 * 60_000 && age <= 30 * 86_400_000;
+}
+
+function latest(rows: News[], limit: number): News[] {
+  return [...new Map(rows.filter(inWindow).map((row) => [row.id, row])).values()]
     .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at) || b.id.localeCompare(a.id))
-    .slice(0, 10);
+    .slice(0, limit);
 }
 
 export default function LiveNewsTicker() {
+  const [visibleLimit, setVisibleLimit] = useState(50);
+  const [total, setTotal] = useState(0);
   const [items, setItems] = useState<News[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,14 +69,17 @@ export default function LiveNewsTicker() {
       const currentRequest = ++request;
       const currentRevision = revision;
       try {
-        const result = await db.from("real_estate_news").select(columns)
+        const result = await db.from("real_estate_news").select(columns, { count: "exact" })
+          .eq("city", "Hyderabad")
+          .gte("published_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
           .order("published_at", { ascending: false }).order("id", { ascending: false })
-          .limit(10).abortSignal(controller.signal);
+          .range(0, visibleLimit - 1).abortSignal(controller.signal);
         if (disposed || currentRequest !== request) return;
         if (result.error) throw result.error;
         // A realtime INSERT received during a query must not be overwritten by its snapshot.
         if (currentRevision === revision) {
-          setItems(latest((result.data ?? []).filter(validNews)));
+          setItems(latest((result.data ?? []).filter(validNews), visibleLimit));
+          setTotal(result.count ?? 0);
           setError(null);
           setLoading(false);
         }
@@ -86,12 +97,12 @@ export default function LiveNewsTicker() {
     }
 
     const channel = db.channel("decode-infra-news")
-      .on("postgres_changes", { event: "*", schema: "public", table: "real_estate_news" }, (payload) => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "real_estate_news", filter: "city=eq.Hyderabad" }, (payload) => {
         if (disposed) return;
         revision += 1;
-        if (payload.eventType === "INSERT" && validNews(payload.new)) {
+        if (payload.eventType === "INSERT" && validNews(payload.new) && inWindow(payload.new)) {
           const incoming = payload.new;
-          setItems((current) => latest([...current.filter((row) => row.id !== incoming.id), incoming]));
+          setItems((current) => latest([...current.filter((row) => row.id !== incoming.id), incoming], visibleLimit));
           setLoading(false);
           setError(null);
         }
@@ -122,28 +133,32 @@ export default function LiveNewsTicker() {
       document.removeEventListener("visibilitychange", onVisibility);
       void db.removeChannel(channel);
     };
-  }, []);
+  }, [visibleLimit]);
 
   return (
     <section className={styles.ticker} aria-labelledby="decode-news-heading" aria-busy={loading}>
       <div className={styles.header}>
         <div><p className={styles.eyebrow}>Decode Infra / Intelligence</p>
-          <h2 id="decode-news-heading">India, in development.</h2></div>
+          <h1 id="decode-news-heading">Hyderabad, in development.</h1></div>
         <span className={styles.status} role="status">
           <span className={connected ? styles.live : styles.offline} aria-hidden="true" />
           {connected ? "Live updates" : "Connecting · auto refresh"}
         </span>
       </div>
-      <p className={styles.intro}>Real estate, infrastructure and policy. The latest signals for informed investors.</p>
+      <p className={styles.intro}>Hyderabad real estate, infrastructure, RERA and city developments from the past 30 days. Newest stories first.</p>
       {loading && <p role="status">Loading the latest news…</p>}
       {error && <p role="status">{error}</p>}
-      {!loading && !error && items.length === 0 && <p>Stories will appear after the first successful ingestion.</p>}
+      {!loading && !error && items.length === 0 && <p>No Hyderabad stories are available for the past 30 days yet.</p>}
+      <p className={styles.meta} role="status">Showing {items.length} of {total} stories · Rolling 30-day archive</p>
       <ol className={styles.list}>
         {items.map((item) => (
           <li key={item.id} className={styles.card}>
             <div className={styles.tags}><span>{item.city}</span><span>{item.category}</span></div>
             <h3><a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}<span className={styles.srOnly}> (opens in a new tab)</span></a></h3>
-            <ul className={styles.bullets}>{item.bullet_summary.map((bullet, index) => <li key={index}>{bullet}</li>)}</ul>
+            {item.ai_model === "source-excerpt" ? (
+              <p className={styles.excerpt}>{item.bullet_summary[1]}</p>
+            ) : <ul className={styles.bullets}>{item.bullet_summary.map((bullet, index) => <li key={index}>{bullet}</li>)}</ul>}
+            <span className={styles.summaryType}>{item.ai_model === "source-excerpt" ? "Source headline / excerpt" : "AI summary"}</span>
             <p className={styles.meta}>{item.source} <span aria-hidden="true">·</span>{" "}
               <time dateTime={item.published_at}>{new Intl.DateTimeFormat("en-IN", {
                 dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata",
@@ -151,7 +166,8 @@ export default function LiveNewsTicker() {
           </li>
         ))}
       </ol>
-      <p className={styles.footnote}>AI summaries of publisher RSS excerpts. Read the source for full context.</p>
+      {items.length < total && <button className={styles.loadMore} onClick={() => setVisibleLimit((limit) => limit + 50)}>Load 50 more stories</button>}
+      <p className={styles.footnote}>Source headlines and excerpts are saved even when the free AI quota is reached. AI summaries are labelled. Categories are automatically assigned. Dates come from publishers’ feeds; coverage is best effort. Read the original for full context.</p>
     </section>
   );
 }
