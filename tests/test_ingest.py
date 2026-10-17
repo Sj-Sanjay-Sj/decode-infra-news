@@ -32,7 +32,7 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(article.title, 'Metro approved')
         self.assertEqual(article.published_at.tzinfo, timezone.utc)
         self.assertIsNone(ingest.parse_entry({**entry, 'published_parsed': None}, 'Test', now))
-        self.assertIsNone(ingest.parse_entry({**entry, 'published_parsed': (now-timedelta(days=4)).utctimetuple()}, 'Test', now))
+        self.assertIsNone(ingest.parse_entry({**entry, 'published_parsed': (now-timedelta(days=31)).utctimetuple()}, 'Test', now))
 
     def test_reject_html_feed_and_recover_transient_http(self):
         with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text='<html>Not RSS</html>'))) as client:
@@ -87,6 +87,37 @@ class IngestionTests(unittest.TestCase):
         ai.models.generate_content.return_value = SimpleNamespace(text=json.dumps({**data, 'bullet_summary': [' ', 'Text']}))
         with self.assertRaises(ValueError):
             ingest.enrich(ai, db, self.article(), 15)
+
+    def test_hyderabad_scope_requires_location_and_property_topic(self):
+        from dataclasses import replace
+        a = self.article()
+        self.assertTrue(ingest.is_hyderabad(replace(a, title="Hyderabad metro expansion")))
+        self.assertTrue(ingest.is_hyderabad(replace(a, title="HMDA land auction at Neopolis")))
+        self.assertFalse(ingest.is_hyderabad(replace(a, title="Mumbai housing prices rise")))
+        self.assertFalse(ingest.is_hyderabad(replace(a, title="Hyderabad cricket match", description="Sports result")))
+        self.assertFalse(ingest.is_hyderabad(replace(a, title="Sukkur-Hyderabad motorway construction", source="ProPakistani")))
+        self.assertFalse(ingest.is_hyderabad(replace(a, title="Warangal police require registration - Hyderabad Mail", source="Hyderabad Mail", description="Warangal police require registration Hyderabad Mail")))
+
+    def test_source_excerpt_is_explicit_and_has_no_invented_entities(self):
+        from dataclasses import replace
+        a = replace(self.article(), title="Hyderabad metro expansion", description="Hyderabad metro expansion")
+        row = ingest.source_record(a)
+        self.assertEqual(row["city"], "Hyderabad")
+        self.assertEqual(row["ai_model"], "source-excerpt")
+        self.assertEqual(row["category"], "Infrastructure")
+        self.assertIsNone(row["developer"])
+        self.assertEqual(len(row["bullet_summary"]), 2)
+        self.assertIn("no AI summary", row["bullet_summary"][1])
+
+    def test_quota_exhaustion_still_persists_all_discoveries(self):
+        from dataclasses import replace
+        articles = [replace(self.article(), title=f"Hyderabad housing update {i}", url=f"https://example.com/{i}") for i in range(5)]
+        db = Mock()
+        with patch.dict('ingest.os.environ', {"SUPABASE_URL": "https://example.supabase.co", "SUPABASE_KEY": "test-only", "GEMINI_API_KEY": "test-only", "NEWS_FEEDS_JSON": '{"Test":"https://example.com/rss"}'}), patch('ingest.create_client', return_value=db), patch('ingest.fetch_feed', return_value=articles), patch('ingest.existing_urls', return_value=set()), patch('ingest.enrich', return_value=None), patch('ingest.genai.Client'):
+            self.assertEqual(ingest.main(), 0)
+        saved = db.table.return_value.upsert.call_args.args[0]
+        self.assertEqual(len(saved), 5)
+        self.assertTrue(all(row["ai_model"] == "source-excerpt" for row in saved))
 
     @staticmethod
     def article():
