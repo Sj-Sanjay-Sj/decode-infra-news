@@ -1,115 +1,60 @@
-# Decode Infra — live real estate news
+# Decode Infra — Hyderabad news
 
-A runnable Next.js app plus Python RSS ingestion, Supabase SQL, and a 20-minute GitHub Actions workflow. News ingestion runs separately from hosting; browsers read the latest ten rows and receive Supabase Postgres Changes immediately after insertion.
+A Next.js static site, Python RSS collector, Supabase database and 20-minute GitHub Actions schedule. The live site shows **Hyderabad-only news from the past 30 days**, newest first, with 50-item pagination and Realtime updates.
 
-## Free-tier constraints — read before deployment
+## Deployment
 
-This code uses no paid API features, search grounding, paid extraction services, or hosting-specific server functions. **The exact requested stack cannot guarantee a free commercial production deployment.**
+- Website: https://decode-infra-news.vercel.app/
+- Repository: https://github.com/Sj-Sanjay-Sj/decode-infra-news
+- Personal, non-commercial Vercel Hobby deployment; Supabase Free; public GitHub standard Linux runners; Gemini free-tier project without paid billing.
+- Free tiers have quotas and can change. This configuration does not enable paid billing or guarantee complete coverage or uninterrupted availability. Vercel Hobby must not be assumed suitable for commercial use.
 
-- **Vercel Hobby is for personal, non-commercial use.** A commercial real estate portal needs different hosting or a paid Vercel plan. The supplied frontend is a static export, so it can be served by an existing host that supports static files; no Next.js server is necessary. Do not deploy a commercial portal on Hobby assuming its terms allow it. [Vercel terms](https://vercel.com/legal/terms).
-- **Use a public GitHub repository and standard Linux runners for the supplied 20-minute schedule.** This is 72 runs/day, or 2,232 runs in a 31-day month. Private repositories can exceed their 2,000-minute allowance. Keep Actions paid usage disabled/set an enforced zero spending budget. Standard runners in public repositories are free. [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
-- **This deployment uses Gemini 3.8 Flash, with free input/output on the Free tier.** Gemini 2.5 Flash is restricted to previously active projects and is unavailable to this deployment. The model is explicitly set in `ingest.py`; the pipeline does not silently fall back to another model. Use a free-tier project without paid billing; a script cannot determine your billing tier from an API key. [Pricing](https://ai.google.dev/gemini-api/docs/pricing), [model availability](https://ai.google.dev/gemini-api/docs/deprecations).
-- Daily request, token and minute limits vary by project. Check AI Studio and set `GEMINI_DAILY_REQUEST_LIMIT` below your actual available daily quota. The default 15/day is a conservative application budget, **not a promise about Google's allowance**. The database counter counts attempted calls and retries, resets at UTC midnight, and only covers this pipeline. Share neither its key nor quota with unrelated workloads if you need predictable capacity. A 429 stops processing with a visible failed job; the script never upgrades to paid access.
-- Supabase Free has finite database, egress, connections, and Realtime quotas. Stay on the Free plan; monitor usage rather than assuming unlimited traffic. Thirty-day record retention bounds normal database growth, but cannot bound anonymous public traffic. Free projects can be restricted or paused and have no production availability guarantee. [Billing](https://supabase.com/docs/guides/platform/billing-on-supabase), [Realtime limits](https://supabase.com/docs/guides/realtime/limits).
-- GitHub cron is best effort: jobs can be delayed or dropped, only run from the default branch, and public-repository schedules are disabled after 60 days without repository activity. Realtime means live delivery **after an insert**, not continuous publisher scraping. [Schedule behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+## Ingestion and coverage
 
-## Files
+`ingest.py` fetches ETRealty, Telangana Today’s property feed and five focused Google News RSS searches covering Hyderabad property, infrastructure, local markets, policy and blogs. Topic and location checks reject unrelated results such as cricket, job notices and Hyderabad in Pakistan. Publishers and search engines can omit, delay or block stories.
 
-- `ingest.py`: bounded feed fetching, BeautifulSoup text extraction, link deduplication, Gemini extraction and insertion.
-- `schema.sql`: table, entity fields, indexes, public read-only RLS, Realtime publication and private AI budget function.
-- `.github/workflows/ingest.yml`: scheduled and manual ingestion, minimal repository permissions, concurrency control and time limit.
-- `components/LiveNewsTicker.tsx` and its CSS module: latest ten stories, city/category tags, two bullets, live inserts, reconnect reconciliation, foreground recovery and cleanup.
-- `app/`: small standalone Next.js App Router integration. For an existing portal, copy the component and CSS module and render `<LiveNewsTicker />`.
-- `requirements-lock.txt`, `package-lock.json`: tested dependency versions. Keep these committed and update them deliberately for security fixes. `requirements.txt` describes compatible direct dependencies.
+All relevant new discoveries are saved before AI enrichment. The default AI budget is 15 attempted requests per UTC day and three articles per run. Articles without AI output remain available with `ai_model=source-excerpt`; the website labels these as source headlines/excerpts. A quota error stops AI processing without discarding saved discoveries. Unknown entities remain null. Categories are automatically assigned and can need editorial correction.
 
-## 1. Create the database
+Dates come from feed publication timestamps. Undated entries, entries older than 30 days and entries more than 15 minutes in the future are skipped. Collection is bounded to 100 entries per source, 2 MB per feed, timeouts and limited retries. URL conflicts cannot duplicate stored rows; Google wrappers and different publishers can still cover the same event. Old records are pruned by publication date after 30 days.
 
-Create a free Supabase project and run the entire `schema.sql` in its SQL editor. This creates a new schema; `CREATE TABLE IF NOT EXISTS` does not migrate an unrelated pre-existing table. Review migrations if the table already exists with different columns.
-
-Obtain its project URL, public **anon/publishable** key and server **service-role/secret** key. Postgres Changes requires the table in the `supabase_realtime` publication; the SQL configures this idempotently. Public keys can SELECT; they cannot INSERT/UPDATE/DELETE or invoke the budget function. The server key is privileged: keep it in GitHub Secrets, never browser code. [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
-
-## 2. Configure ingestion
-
-Place the contents of this directory at your repository root (including the hidden `.github` directory). Add GitHub **Repository Secrets**:
-
-| Secret | Value |
-| --- | --- |
-| `GEMINI_API_KEY` | Free-tier Gemini project key with 3.8 Flash access |
-| `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` |
-| `SUPABASE_KEY` | Server service-role/secret key, never the public anon key |
-
-Optionally add repository variable `GEMINI_DAILY_REQUEST_LIMIT` (default `15`). The workflow limits each run to three articles; set the daily budget according to your available quota. Fifteen daily requests can enrich at most fifteen articles/day, fewer after retries. Increasing coverage requires an available free quota; excess candidates are deferred, not guaranteed eventual processing.
-
-Enable Actions, commit to the default branch and run **Decode Infra news ingestion → Run workflow** once. Confirm rows appear in Supabase. Normal success is quiet; feed warnings and actual failures are retained in job logs. Dependencies are installed without verbose output. Never suppress failures with `|| true`.
-
-For a local run (Python 3.12+):
+`backfill.py` searches the last 30 days in overlapping weekly date windows across six topic groups, plus current feeds. It removes identical headlines, preferring direct publisher URLs over Google wrappers. This broadens discovery beyond current RSS items but cannot guarantee every article online.
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements-lock.txt
-# Export GEMINI_API_KEY, SUPABASE_URL and SUPABASE_KEY in your shell.
-python ingest.py
-python -m unittest discover -s tests -v
+python backfill.py --output hyderabad-backfill.json
 ```
 
-Python reads process environment variables; it does not automatically load `.env` files. Do not commit real credentials. `.env.example` documents the settings.
+The output contains public metadata, source excerpts and source-health results. Import its `rows` through an authorized server connection with URL conflict protection. Do not put a database write key in the browser.
 
-## 3. Configure the frontend
+## Setup
 
-Create `.env.local` with **only the browser settings**:
+Use Python 3.12+, install `requirements-lock.txt`, and run `schema.sql` in the Supabase SQL editor. It creates the news table, public read policy, Realtime publication, private AI request counter and server-only URL lookup function. Browser clients cannot write news or claim the AI budget.
+
+Set these GitHub repository secrets:
+
+- `GEMINI_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_KEY` — server service-role/secret key, never a browser key
+
+The workflow runs every 20 minutes; scheduled runs may be delayed. Use a public repository with standard runners to avoid the private-repository 2,000-minute limit. Keep paid usage disabled. Repository variable `GEMINI_DAILY_REQUEST_LIMIT` defaults to 15; this is an application cap, not a statement of Google's available quota. The model is explicitly `gemini-3.8-flash`, approved for this deployment when 2.5 Flash was unavailable.
+
+For the website, install from `package-lock.json` and set `.env.local`:
 
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLIC_ANON_OR_PUBLISHABLE_KEY
+NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_KEY
 ```
 
-```sh
-npm ci
-npm run dev
-```
-
-The key is intentionally public and protected by RLS. Do not copy `SUPABASE_KEY` into any `NEXT_PUBLIC_*` setting. The component renders untrusted text as React text, validates HTTP links, and opens publisher links with `noopener noreferrer`.
-
-For production:
+Only the publishable key belongs in `NEXT_PUBLIC_*`. `npm run build` creates `out/` for static hosting. Deploy that output to the existing Vercel project. News changes do not require redeployment; source changes do. GitHub and Vercel are not connected for automatic deployments.
 
 ```sh
-npm run typecheck
+python -m unittest discover -s tests -v
 npm run build
 ```
 
-Serve the resulting `out/` directory from a static host. Environment values are embedded at build time: rebuild when changing Supabase projects/keys. Vercel can use the Next.js preset with these two public environment variables, subject to its commercial-use terms. The GitHub ingestion job runs independently and uses no Vercel cron or paid server functions.
+Tests cover URL identity, dated-feed parsing, Hyderabad relevance, source-excerpt labelling, quota-safe persistence, transient feed failures, long-URL POST lookup, AI output validation and quota handling. Verify meaningful facts against original publishers before relying on summaries.
 
-## Feed behavior and data quality
+## Frontend and digest
 
-The configured sources are ETRealty, a national/city/topic Google News RSS search, a candidate RealtyNXT direct feed, and Google News publisher searches for RealtyNXT and Magicbricks. Direct feed URLs can change or be blocked. During verification, ETRealty and all three Google News queries returned valid RSS; `https://realtynxt.com/feed/` returned an HTTP error. It is isolated and does not prevent the other sources from running. A verified current direct Magicbricks RSS endpoint was unavailable, so publisher coverage uses Google's site search rather than an invented endpoint.
+`LiveNewsTicker.tsx` queries `city=Hyderabad` and a rolling 30-day publication cutoff. It loads 50 stories initially and offers more pages, merges relevant inserts, reconciles after changes/reconnects, and refreshes while visible to recover missed events. `CoverageDetails.tsx` explains source coverage and the separate owner digest.
 
-To replace feeds locally, export `NEWS_FEEDS_JSON` as a JSON object mapping source name to HTTPS feed URL. For Actions, add the same variable to the workflow environment backed by a repository variable. Validate publishers' current feeds before relying on them. Feed fetching is bounded to 2 MB, 100 entries/source, timeouts and limited retries. HTML responses are rejected; all feeds failing produces a failed job. Partial source failures produce warnings.
-
-Only RSS titles/descriptions are supplied to Gemini, not full articles or paywalled content. Missing/invalid dates, entries older than 72 hours, and entries more than 15 minutes in the future are skipped. Missing entities are null; city is `India` for national items or `Unknown` when evidence is insufficient. The stored description preserves the plain-text excerpt for review. Summaries contain exactly two validated strings. Structured output improves format reliability but cannot guarantee factual correctness; review important items against the linked source.
-
-Links are normalized by removing fragments and common tracking parameters while retaining article identity query parameters. Existing links are checked through a server-only database function using a POST body to avoid URL length limits from Google News links. Deduplication is by URL before AI processing, with a database UNIQUE constraint and conflict-ignore insert as the final guard. **Different URLs for syndicated stories are not semantic duplicates.** Google News RSS links remain Google redirect URLs; the code does not attempt unsupported decoding or fetch arbitrary publisher URLs. The same story in ETRealty and Google News can therefore appear twice. No claim of cross-publisher deduplication is made.
-
-Candidates are processed oldest first within the 72-hour window to reduce starvation. There is no durable raw-feed backlog: failed items can be retried while they remain in RSS, but items that age out, disappear, or exceed the daily quota can be lost. This is a bounded free-tier feed, not a complete news archive. Thirty-day cleanup deletes stored articles; AI budget history older than fourteen days is also pruned.
-
-## Deployed instance
-
-Website: https://decode-infra-news.vercel.app/
-
-Repository: https://github.com/Sj-Sanjay-Sj/decode-infra-news
-
-The website was deployed as a Next.js static export on Vercel Hobby. News updates come directly from Supabase; they do not require a website redeployment. Source changes need a new website deployment because Git integration is not connected.
-
-## Live behavior and validation
-
-The component fetches the latest ten rows ordered by publication time, merges INSERT events immediately, and refreshes a snapshot after changes or successful subscriptions. Stale query results cannot overwrite a newer realtime insert. It removes subscriptions/timers on unmount and refreshes once per minute while visible plus on tab return. Public SELECT access is intentional; keep private editorial drafts in a separate restricted table. [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
-
-Local checks cover URL identity, invalid links, HTML cleaning, feed dates, transient HTTP failures, HTML masquerading as RSS, structured AI output, exact bullet count, exhausted application budgets and 429 behavior. The Next.js production build and TypeScript validation pass. Embedded PostgreSQL checks also passed for schema reapplication, public read-only permissions, service writes, URL uniqueness, bullet constraints, and the daily request cap. These do not substitute for a hosted Supabase Realtime test. Live feed probes were performed without Gemini or Supabase credentials. Full live AI ingestion and hosted Realtime delivery still require your project credentials and a successful smoke test:
-
-1. Run the SQL and manual ingestion workflow.
-2. Open two browser sessions and verify new inserted stories appear in both.
-3. Disconnect/reconnect one session and verify it recovers the latest ten stories.
-4. Confirm public-key writes and calls to `claim_news_ai_call` fail.
-5. Re-run ingestion and confirm existing URLs create no new rows.
-
-Keep dependency lockfiles current. The app uses the patched Next.js 15.5 maintenance line, satisfying Next.js 14+. [October 2026 security release](https://nextjs.org/blog/nextjs-security-update-october-14-2026).
+The owner's Codex automation sends a **Hyderabad-only daily Gmail digest at 9:00 AM IST**, when meaningful new stories are available. It uses connected Gmail/web tools, not a public subscription form or the website's AI quota. The digest has its own publisher/date checks and duplicate detection. Automation availability depends on the connected host and account access.

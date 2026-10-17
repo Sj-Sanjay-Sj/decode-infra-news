@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -35,15 +36,72 @@ def google_feed(query: str) -> str:
     )
 
 
-# RealtyNXT's candidate endpoint is isolated: HTML/blocked feeds fail validation.
-# Google site searches provide coverage when publisher feeds are unavailable.
+# Multiple focused queries reduce the chance that a busy source hides local news.
 DEFAULT_FEEDS = {
     "ETRealty": "https://realty.economictimes.indiatimes.com/rss/topstories",
-    "Google News": google_feed('(India real estate OR Hyderabad real estate OR RERA OR Neopolis OR "Prestige Group") when:3d'),
-    "RealtyNXT": "https://realtynxt.com/feed/",
-    "Google News / RealtyNXT": google_feed("site:realtynxt.com when:3d"),
-    "Google News / Magicbricks": google_feed("site:magicbricks.com/news when:3d"),
+    "Telangana Today / Property": "https://telanganatoday.com/tag/real-estate/feed",
+    "Hyderabad property": google_feed('Hyderabad ("real estate" OR housing OR property OR RERA) when:30d'),
+    "Hyderabad infrastructure": google_feed('Hyderabad (metro OR "ring road" OR HMDA OR GHMC OR infrastructure) when:30d'),
+    "Hyderabad local markets": google_feed('(Kokapet OR Neopolis OR Raidurg OR Gachibowli OR Nanakramguda OR Tellapur) (property OR land OR project OR realty) when:30d'),
+    "Hyderabad policy": google_feed('(Hyderabad OR HMDA OR TGRERA OR TSRERA) (land OR housing OR registration OR auction OR RERA) when:30d'),
+    "Hyderabad blogs": google_feed('Hyderabad (site:magicbricks.com/news OR site:realtynxt.com OR site:housing.com/news OR site:squareyards.com/blog OR site:nobroker.in/blog) when:30d'),
 }
+
+LOCATION = re.compile(r"\b(hyderabad|secunderabad|kokapet|neopolis|raidurg|gachibowli|nanakramguda|tellapur|narsingi|miyapur|kollur|shamshabad|patancheru|hmda|ghmc)\b", re.I)
+TOPIC = re.compile(
+    r"real.?estate|propert(?:y|ies)|hous(?:ing|es)|home(?:buyers|ownership|buying|sales|registrations)|"
+    r"\brera\b|tgrera|tsrera|residential|commercial|apartment|villa|\bflats?\b|"
+    r"\bland\b|auction|builder|developer|construction|infrastructure|\bmetro\b|ring road|"
+    r"flyover|urban planning|water crisis|water conservation|water shortage|water projects|"
+    r"water preparedness|waterbodies|lake|\bmusi\b|nala|corridor|road expansion|"
+    r"road work|road project|road safety|highway|data.?cent|\bgcc\b|"
+    r"office.{0,50}(?:leas|space|sq|footprint|hub)|(?:opens?|new|first|expand|leas).{0,50}office", re.I)
+EXCLUDE = re.compile(
+    r"sukkur|sunrisers|cricket|\bipl\b|laddu|ganesh immersion|meat shop|slaughterhouse|"
+    r"voter|election|chief election|\bcec\b|anti-sir|\bsir protests|pet shop|"
+    r"recruitment|admission|accounts office|\bsindh\b|\bpakistan\b|"
+    r"commercial ads|sid.s farm|wisig|ownly|named cto|named.{0,20}openai|hospital official|attacking father|fastest couple|medical emergency|flight to land|shot dead|missing.{0,20}student|"
+    r"rescues? man|registration hours|op registrations|officer.s widow|"
+    r"viral video|net worth|ponzi.{0,15}offender|police solves|road accident|"
+    r"liberation day|snake|python|protest.{0,50}ed office|detained.{0,50}agency office|"
+    r"outside.{0,30}election office|gst council offices|pharma.{0,20}drug seizure", re.I)
+
+
+def is_hyderabad(article: Article) -> bool:
+    # Search feeds append publisher names (e.g. Hyderabad Mail). Those must not
+    # make unrelated Warangal or Pakistan stories appear geographically relevant.
+    if article.source.casefold() in {"instagram", "youtube", "such tv", "propakistani"}:
+        return False
+    title = article.title
+    suffix = " - " + article.source
+    if title.endswith(suffix):
+        title = title[:-len(suffix)]
+    description = article.description.replace(article.source, "")
+    text = title + " " + description
+    return bool(LOCATION.search(text) and TOPIC.search(title) and not EXCLUDE.search(title))
+
+
+def source_record(article: Article) -> dict:
+    """Save discoveries even when AI is unavailable; never present these as AI summaries."""
+    text = article.title + " " + article.description
+    if re.search(r"rera|policy|registration|court|regulat|\b22.?a\b|hydraa", text, re.I):
+        category = "Policy/RERA"
+    elif re.search(r"metro|ring road|infrastructure|flyover|musi|highway", text, re.I):
+        category = "Infrastructure"
+    elif re.search(r"office|commercial|logistic|warehouse|leasing|data.cent", text, re.I):
+        category = "Commercial"
+    elif re.search(r"residential|housing|home|apartment|villa|flat", text, re.I):
+        category = "Residential"
+    else:
+        category = "Market Insights"
+    excerpt = clean_text(article.description, 350)
+    if not excerpt or article.title.lower() in excerpt.lower():
+        excerpt = "Publisher-provided headline. Open the original report for details; no AI summary is available."
+    return {"title": article.title, "source": article.source, "url": article.url,
+            "published_at": article.published_at.isoformat(), "description": article.description,
+            "city": "Hyderabad", "category": category, "developer": None,
+            "micro_market": None, "investment_figure": None,
+            "ai_model": "source-excerpt", "bullet_summary": [article.title[:350], excerpt]}
 
 
 class Enrichment(BaseModel):
@@ -112,7 +170,7 @@ def parse_entry(entry: dict, source: str, now: datetime) -> Article | None:
         if not title or not date:
             return None
         published = datetime.fromtimestamp(calendar.timegm(date), UTC)
-        if published < now - timedelta(hours=72) or published > now + timedelta(minutes=15):
+        if published < now - timedelta(days=30) or published > now + timedelta(minutes=15):
             return None
         description = clean_text(entry.get("summary") or entry.get("description") or "")
         publisher = clean_text((entry.get("source") or {}).get("title", ""), 200)
@@ -228,7 +286,8 @@ def main() -> int:
         for name, url in feeds.items():
             try:
                 for article in fetch_feed(http, name, url):
-                    candidates.setdefault(article.url, article)
+                    if is_hyderabad(article):
+                        candidates.setdefault(article.url, article)
                 healthy += 1
             except Exception as exc:
                 LOG.warning("Feed unavailable: %s (%s)", name, type(exc).__name__)
@@ -238,38 +297,32 @@ def main() -> int:
     # Deduplicate before spending AI requests; SQL uniqueness is the final race guard.
     existing = existing_urls(db, list(candidates))
     pending = sorted((a for a in candidates.values() if a.url not in existing),
-                     key=lambda a: (a.published_at, a.url))[:max_articles]
+                     key=lambda a: (a.published_at, a.url), reverse=True)
+    # First persist all relevant discoveries. The AI quota must not hide the archive.
+    for start in range(0, len(pending), 50):
+        rows = [source_record(article) for article in pending[start:start + 50]]
+        db.table(TABLE).upsert(rows, on_conflict="url", ignore_duplicates=True).execute()
     failures = 0
-    with genai.Client(api_key=required("GEMINI_API_KEY"),
-                      http_options=types.HttpOptions(timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1))) as ai:
-        for index, article in enumerate(pending):
-            if index:
-                time.sleep(7)  # Conservative pacing; dashboard RPM/TPM limits still apply.
-            try:
-                data = enrich(ai, db, article, daily_limit)
-                if data is None:
+    if pending and os.getenv("GEMINI_API_KEY"):
+        with genai.Client(api_key=required("GEMINI_API_KEY"),
+                          http_options=types.HttpOptions(timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1))) as ai:
+            for index, article in enumerate(pending[:max_articles]):
+                if index:
+                    time.sleep(7)
+                try:
+                    data = enrich(ai, db, article, daily_limit)
+                    if data is None:
+                        break
+                    # Location is established by the local relevance gate; keep a consistent city label.
+                    update = {**data.model_dump(), "city": "Hyderabad", "ai_model": MODEL}
+                    db.table(TABLE).update(update).eq("url", article.url).execute()
+                except Exception as exc:
+                    LOG.warning("AI enrichment unavailable (%s); source excerpts remain available", type(exc).__name__)
                     break
-                row = {"title": article.title, "source": article.source, "url": article.url,
-                       "published_at": article.published_at.isoformat(), "description": article.description,
-                       "ai_model": MODEL, **data.model_dump()}
-                # DO NOTHING on conflict: duplicate deliveries must not rewrite published data.
-                db.table(TABLE).upsert(row, on_conflict="url", ignore_duplicates=True).execute()
-            except errors.APIError as exc:
-                message = str(getattr(exc, "message", ""))
-                for name in ("GEMINI_API_KEY", "SUPABASE_KEY"):
-                    value = os.environ.get(name)
-                    if value:
-                        message = message.replace(value, "[redacted]")
-                LOG.error("Gemini request failed (status %s): %s; remaining items deferred", exc.code, message[:400])
-                failures += 1
-                break
-            except Exception as exc:
-                LOG.error("Article processing failed (%s); it will be retried next run", type(exc).__name__)
-                failures += 1
     # Keep free-tier storage bounded; old links cease to be deduplication records.
-    # The 72-hour input window prevents normal reingestion of expired records.
+    # Publication dates define the rolling archive, including backfilled stories.
     cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
-    db.table(TABLE).delete().lt("created_at", cutoff).execute()
+    db.table(TABLE).delete().lt("published_at", cutoff).execute()
     LOG.info("Ingestion finished: %s healthy feeds, %s candidates, %s failures", healthy, len(candidates), failures)
     return 1 if failures else 0
 
