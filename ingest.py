@@ -39,7 +39,16 @@ def google_feed(query: str) -> str:
 # Multiple focused queries reduce the chance that a busy source hides local news.
 DEFAULT_FEEDS = {
     "ETRealty": "https://realty.economictimes.indiatimes.com/rss/topstories",
+    "ET Infra": "https://infra.economictimes.indiatimes.com/rss/topstories",
+    "Hyderabad Mail": "https://hyderabadmail.com/feed/",
+    "Telangana Today / Hyderabad": "https://telanganatoday.com/hyderabad/feed",
+    "Siasat / Hyderabad": "https://www.siasat.com/news/hyderabad/feed/",
     "Telangana Today / Property": "https://telanganatoday.com/tag/real-estate/feed",
+    # The 30-day searches below favour popular older coverage. Separate recent
+    # searches prevent those results from crowding today's discoveries out.
+    "Hyderabad latest property": google_feed('Hyderabad (property OR housing OR RERA OR developer OR construction) when:3d'),
+    "Hyderabad latest infrastructure": google_feed('Hyderabad (metro OR HMDA OR GHMC OR flyover OR infrastructure OR "ring road") when:3d'),
+    "Hyderabad latest utilities": google_feed('Hyderabad ("water supply" OR pipeline OR borewell OR STP OR lake OR "Future City") when:3d'),
     "Hyderabad property": google_feed('Hyderabad ("real estate" OR housing OR property OR RERA) when:30d'),
     "Hyderabad infrastructure": google_feed('Hyderabad (metro OR "ring road" OR HMDA OR GHMC OR infrastructure) when:30d'),
     "Hyderabad local markets": google_feed('(Kokapet OR Neopolis OR Raidurg OR Gachibowli OR Nanakramguda OR Tellapur) (property OR land OR project OR realty) when:30d'),
@@ -47,12 +56,13 @@ DEFAULT_FEEDS = {
     "Hyderabad blogs": google_feed('Hyderabad (site:magicbricks.com/news OR site:realtynxt.com OR site:housing.com/news OR site:squareyards.com/blog OR site:nobroker.in/blog) when:30d'),
 }
 
-LOCATION = re.compile(r"\b(hyderabad|secunderabad|kokapet|neopolis|raidurg|gachibowli|nanakramguda|tellapur|narsingi|miyapur|kollur|shamshabad|patancheru|hmda|ghmc)\b", re.I)
+LOCATION = re.compile(r"\b(hyderabad|secunderabad|kokapet|neopolis|raidurg|gachibowli|nanakramguda|tellapur|narsingi|miyapur|kollur|shamshabad|patancheru|kompally|kukatpally|nagole|uppal|manikonda|future city|hmda|ghmc)\b", re.I)
 TOPIC = re.compile(
     r"real.?estate|propert(?:y|ies)|hous(?:ing|es)|home(?:buyers|ownership|buying|sales|registrations)|"
     r"\brera\b|tgrera|tsrera|residential|commercial|apartment|villa|\bflats?\b|"
     r"\bland\b|auction|builder|developer|construction|infrastructure|\bmetro\b|ring road|"
     r"flyover|urban planning|water crisis|water conservation|water shortage|water projects|"
+    r"water supply|drinking.water|pipeline|borewells?|sewage|\bstps?\b|campus|campuses|\bacres?\b|"
     r"water preparedness|waterbodies|lake|\bmusi\b|nala|corridor|road expansion|"
     r"road work|road project|road safety|highway|data.?cent|\bgcc\b|"
     r"office.{0,50}(?:leas|space|sq|footprint|hub)|(?:opens?|new|first|expand|leas).{0,50}office", re.I)
@@ -61,6 +71,7 @@ EXCLUDE = re.compile(
     r"voter|election|chief election|\bcec\b|anti-sir|\bsir protests|pet shop|"
     r"recruitment|admission|accounts office|\bsindh\b|\bpakistan\b|"
     r"commercial ads|sid.s farm|wisig|ownly|named cto|named.{0,20}openai|hospital official|attacking father|fastest couple|medical emergency|flight to land|shot dead|missing.{0,20}student|"
+    r"\btheft\b|\bransom\b|\bkidnapp|\babduct|\bhoney.trap\b|\bextortion\b|"
     r"rescues? man|registration hours|op registrations|officer.s widow|"
     r"viral video|net worth|ponzi.{0,15}offender|police solves|road accident|"
     r"liberation day|snake|python|protest.{0,50}ed office|detained.{0,50}agency office|"
@@ -285,10 +296,13 @@ def main() -> int:
                       headers={"User-Agent": "DecodeInfraNews/1.0 (RSS aggregator)"}) as http:
         for name, url in feeds.items():
             try:
-                for article in fetch_feed(http, name, url):
+                articles = fetch_feed(http, name, url)
+                for article in articles:
                     if is_hyderabad(article):
                         candidates.setdefault(article.url, article)
                 healthy += 1
+                newest = max((a.published_at for a in articles), default=None)
+                LOG.info("Feed checked: %s; dated items=%s; newest=%s", name, len(articles), newest)
             except Exception as exc:
                 LOG.warning("Feed unavailable: %s (%s)", name, type(exc).__name__)
     if not healthy:
@@ -323,12 +337,14 @@ def main() -> int:
     # Publication dates define the rolling archive, including backfilled stories.
     cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     db.table(TABLE).delete().lt("published_at", cutoff).execute()
-    LOG.info("Ingestion finished: %s healthy feeds, %s candidates, %s failures", healthy, len(candidates), failures)
+    LOG.info("Ingestion finished: %s healthy feeds, %s candidates, %s new discoveries, %s failures", healthy, len(candidates), len(pending), failures)
     return 1 if failures else 0
 
 
 if __name__ == "__main__":
+    # Keep third-party request logs quiet: their URLs or headers may contain keys.
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
+    LOG.setLevel(logging.INFO)
     try:
         sys.exit(main())
     except Exception as exc:
