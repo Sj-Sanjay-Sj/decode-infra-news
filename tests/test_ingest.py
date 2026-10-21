@@ -109,6 +109,18 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(len(row["bullet_summary"]), 2)
         self.assertIn("no AI summary", row["bullet_summary"][1])
 
+    def test_recent_city_services_and_crime_filter(self):
+        from dataclasses import replace
+        for title in ["Hyderabad drinking water supply restored after pipeline repairs",
+                      "Telangana plans 250 acres for university campuses in Future City",
+                      "Kukatpally private STP registration deadline"]:
+            self.assertTrue(ingest.is_hyderabad(replace(self.article(), title=title)), title)
+        for title in ["Hyderabad police arrest one in ATM theft; property seized",
+                      "Hyderabad businessman abducted in property row, ransom sought",
+                      "Hyderabad honey-trap extortion over property"]:
+            self.assertFalse(ingest.is_hyderabad(replace(self.article(), title=title)), title)
+        self.assertTrue(any("when%3A3d" in url for url in ingest.DEFAULT_FEEDS.values()))
+
     def test_quota_exhaustion_still_persists_all_discoveries(self):
         from dataclasses import replace
         articles = [replace(self.article(), title=f"Hyderabad housing update {i}", url=f"https://example.com/{i}") for i in range(5)]
